@@ -1,101 +1,157 @@
-// #include <BleMouse.h>
-
-// BleMouse bleMouse;
-// #define BUILTIN_LED  2
-
-// void setup() {
-//   Serial.begin(115200);
-//   Serial.println("Starting BLE work!");
-//   bleMouse.begin();
-//   pinMode(BUILTIN_LED, OUTPUT);
-// }
-
-// void loop() {
-//   if(bleMouse.isConnected()) {
-//     digitalWrite(BUILTIN_LED,HIGH);
-//     unsigned long startTime;
-
-//     Serial.println("Move mouse pointer up");
-//     startTime = millis();
-//     while(millis()<startTime+2000) {
-//       bleMouse.move(0,-1);
-//       delay(100);
-//     }
-//     delay(500);
-
-//     Serial.println("Move mouse pointer down");
-//     startTime = millis();
-//     while(millis()<startTime+2000) {
-//       bleMouse.move(0,1);
-//       delay(100);
-//     }
-//     delay(500);
-
-//     Serial.println("Move mouse pointer left");
-//     startTime = millis();
-//     while(millis()<startTime+2000) {
-//       bleMouse.move(-1,0);
-//       delay(100);
-//     }
-//     delay(500);
-
-//     Serial.println("Move mouse pointer right");
-//     startTime = millis();
-//     while(millis()<startTime+2000) {
-//       bleMouse.move(1,0);
-//       delay(100);
-//     }
-//     delay(500);
-    
-//     bleMouse.click(MOUSE_RIGHT);
-//     delay(500);
-//   }
-//   else digitalWrite(BUILTIN_LED,LOW);
-// }
-
-
-//air_mouse_with_click
-#include <Wire.h>
-//#include <I2Cdev.h>
-#include <MPU6050.h>
-//#include <SPI.h>
-//#include <BLEHIDPeripheral.h>
+#include <TinyMPU6050.h>
 #include <BleMouse.h>
+#include "src/Led.h"
 
-BleMouse bleMouse;
-MPU6050 mpu;
+//add battery measurement
+class Button {
+  private:
+    byte pin;
+    byte state;
+    byte lastReading;
+    unsigned long lastDebounceTime = 0;
+    unsigned long debounceDelay = 50;
+  public:
+    Button(byte pin) {
+      this->pin = pin;
+      lastReading = LOW;
+      init();
+    }
+    void init() {
+      pinMode(pin, INPUT_PULLUP);
+      update();
+    }
+    void update() {
+      byte newReading = !digitalRead(pin);
+      if (newReading != lastReading) {
+        lastDebounceTime = millis();
+      }
+      if (millis() - lastDebounceTime > debounceDelay) {
+        state = newReading;
+      }
+      lastReading = newReading;
+    }
+    byte getState() {
+      update();
+      return state;
+    }
+    bool isPressed() {
+      return (getState() == HIGH);
+    }
+};
+class Smoothing {
+  private:
+    #define numAvgReadings 50
+    float avgValue = 0, sum = 0, filteredValue = 0, lastValue = 0, filterPar = 0.95;
+    float readings[numAvgReadings];
+    int readIndex = 0;
+
+    void calculateAccelMovingAverage(float value) {
+      sum = sum - readings[readIndex];
+      readings[readIndex] = value; 
+      sum = sum + readings[readIndex]; 
+      avgValue = sum / numAvgReadings;
+      readIndex = (readIndex + 1) % numAvgReadings; 
+    }
+
+    void calculateFilteredValue(float value) {
+      filteredValue = lastValue * filterPar + value * (1 - filterPar);
+      lastValue = filteredValue;
+    }
+
+  public:
+    Smoothing() {
+      init();
+    }
+
+    void init() {
+      for (int i = 0; i < numAvgReadings; i++) readings[i] = 0;
+    }
+
+    void add(float value) {
+        calculateAccelMovingAverage(value);
+        calculateFilteredValue(value);
+    }
+
+    float getMovingAverage()  {
+      return avgValue;
+    }
+
+    float getFilteredValue()  {
+      return filteredValue;
+    }
+};
+//BleMouse bleMouse;
+BleMouse bleMouse("Air mouse");
+Button leftClick(15);
+Button rightClick(0);
+Smoothing X;
+Smoothing Y;
+Led onboardLed(5);
+MPU6050 mpu (Wire);
 int16_t ax, ay, az, gx, gy, gz;
-int vx, vy, vx_prec, vy_prec;
-int count=0;
+int x, int y;
 
 void setup() {
   Serial.begin(9600);
   bleMouse.begin();
-  Wire.begin();
-  mpu.initialize();
-  if (!mpu.testConnection()) {
-    Serial.println("Check MPU connection!");
-    while (1);
-    }
+  mpu.Initialize();
 }
 
 void loop() {
+  //Serial.println("Waiting for connection..");
+  //delay(1000);
+  onboardLed.blinkMs(500);
+  mpu.Execute();
+  X.add(mpu.GetGyroZ());
+  Y.add(mpu.GetGyroY());
+  // Serial.print("AngX = ");
+  // Serial.print(mpu.GetAngX());
+  // Serial.print(" AngY = ");
+  // Serial.print(mpu.GetAngY());
+  // Serial.print(" AngZ = ");
+  // Serial.print(mpu.GetAngZ());
+  // Serial.print(" GyroX = ");
+  // Serial.print(mpu.GetGyroX());
+  // Serial.print(" GyroY = ");
+  // Serial.print(mpu.GetGyroY());
+  // Serial.print(" GyroZ = ");
+  // Serial.print(mpu.GetGyroZ());
+  // Serial.print(" leftCLick: ");
+  // Serial.print(leftClick.isPressed());
+  // Serial.print(" rightCLick: ");
+  // Serial.println(rightClick.isPressed());
   if(bleMouse.isConnected()) {
-    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-
-    vx = (gx+300)/200;  
-    vy = -(gy-100)/200;
+    // vx = mpu.GetAccZ();  
+    // vy = mpu.GetAccY();
+    x = X.getMovingAverage()/10;  
+    y = -Y.getMovingAverage()/10;
     Serial.println(String(vx) + " " + String(vy));
     
-    vx = (abs(vx) > 5) ? vx : 0;
-    vy = (abs(vy) > 5) ? vy : 0;
+    x = (abs(x) > 5) ? x : 0;
+    y = (abs(y) > 5) ? y : 0;
 
-    bleMouse.move(vx, vy);
-    delay(50);
+    bleMouse.move(x, y);
+    if(leftClick.isPressed()) {
+      bleMouse.press(MOUSE_LEFT);
+    } 
+    else
+    {
+      bleMouse.release(MOUSE_LEFT);
+    }
+    if(rightClick.isPressed()) {
+      bleMouse.press(MOUSE_RIGHT);
+    } 
+    else
+    {
+      bleMouse.release(MOUSE_RIGHT);
+    }
+    //delay(1);
   }
 }
 
-void autoClick()  {
+void autoClick(int vx, int vy)  {
+  static int vx_prec, vy_prec;
+  static int count = 0;
   if ( (vx_prec-5)<=vx && vx<=vx_prec+5 && (vy_prec-5)<=vy && vy<=vy_prec+5) { // for checking the cursor doesn't move too much from its actual position: (in this case a 10 pixel square)
     count++;                                                                  
     if(count == 100){ // the click will happen after 2 seconds the pointer has stopped in the 10px square
