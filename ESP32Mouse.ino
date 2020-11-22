@@ -2,6 +2,8 @@
 #include <BleMouse.h>
 #include "src/Led.h"
 
+const int sensivity = 7;
+
 //add battery measurement
 class Button {
   private:
@@ -89,7 +91,7 @@ Smoothing Y;
 Led onboardLed(5);
 MPU6050 mpu (Wire);
 int16_t ax, ay, az, gx, gy, gz;
-int x, int y;
+int x, y;
 
 void setup() {
   Serial.begin(9600);
@@ -123,12 +125,12 @@ void loop() {
   if(bleMouse.isConnected()) {
     // vx = mpu.GetAccZ();  
     // vy = mpu.GetAccY();
-    x = X.getMovingAverage()/10;  
-    y = -Y.getMovingAverage()/10;
-    Serial.println(String(vx) + " " + String(vy));
+    x = X.getMovingAverage() / sensivity;  
+    y = -Y.getMovingAverage() / sensivity;
+    Serial.println(String(x) + " " + String(y));
     
-    x = (abs(x) > 5) ? x : 0;
-    y = (abs(y) > 5) ? y : 0;
+    x = (abs(x) > 1) ? x : 0;
+    y = (abs(y) > 1) ? y : 0;
 
     bleMouse.move(x, y);
     if(leftClick.isPressed()) {
